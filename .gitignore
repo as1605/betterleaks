@@ -31,3 +31,16 @@ dist/
 
 # Local installation for the Node.js example
 /examples/node/node_modules/
+
+# Python binding build outputs, virtualenvs, and staged native artifacts
+!/bindings/python/src/betterleaks/
+/bindings/python/.venv/
+/bindings/python/.pytest_cache/
+/bindings/python/.ruff_cache/
+/bindings/python/build/
+/bindings/python/dist/
+/bindings/python/_upstream/
+/bindings/python/src/*.egg-info/
+/bindings/python/src/betterleaks/bin/
+/bindings/python/src/betterleaks/libbetterleaks_ffi.*
+**/__pycache__/

@@ -1,6 +1,7 @@
 # Native bindings (experimental)
 
-Betterleaks can be embedded through a C ABI, a safe Rust wrapper, or the
+Betterleaks can be embedded through a C ABI, a safe Rust wrapper, the
+[Python package](python/README.md), or the
 [Node.js API](node/README.md) on macOS and glibc Linux, on both x86-64 and ARM64.
 Windows bindings are deferred. The native archive
 contains the Go engine, embedded rules, and Go runtime. Consumers need a platform
@@ -66,8 +67,12 @@ source prefilters. Recursive decoding is disabled unless requested.
 
 ## Use from Python
 
-After building the native libraries, load the shared library directly with
-Python’s standard library. On Apple Silicon:
+Install the combined Python bindings and CLI package (`pip install betterleaks`)
+or see the [Python package README](python/README.md) for API usage, custom
+scanners, and wheel builds.
+
+To load the raw shared library directly without the Python package, build the
+native artifact and run the smoke test (Apple Silicon example):
 
 ```sh
 BETTERLEAKS_LIB_DIR="$PWD/dist/native/aarch64-apple-darwin/lib" python3 examples/python/native_smoke.py
