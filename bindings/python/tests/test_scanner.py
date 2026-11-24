@@ -58,7 +58,7 @@ keywords = ["FILERULE_"]
             os.remove(cfg_path)
 
 
-def test_relative_config_cache_key_resolves_abspath(monkeypatch):
+def test_relative_config_cache_key_resolves_abspath():
     cfg_a = (
         "[[rules]]\nid = 'dir-a'\nregex = '''DIRA_[0-9]{4}'''\nkeywords = ['DIRA_']\n"
     )
@@ -66,23 +66,31 @@ def test_relative_config_cache_key_resolves_abspath(monkeypatch):
         "[[rules]]\nid = 'dir-b'\nregex = '''DIRB_[0-9]{4}'''\nkeywords = ['DIRB_']\n"
     )
 
+    orig_cwd = os.getcwd()
     with tempfile.TemporaryDirectory() as dir_a, tempfile.TemporaryDirectory() as dir_b:
-        with open(os.path.join(dir_a, "rules.toml"), "w", encoding="utf-8") as fh:
-            fh.write(cfg_a)
-        with open(os.path.join(dir_b, "rules.toml"), "w", encoding="utf-8") as fh:
-            fh.write(cfg_b)
+        try:
+            with open(os.path.join(dir_a, "rules.toml"), "w", encoding="utf-8") as fh:
+                fh.write(cfg_a)
+            with open(os.path.join(dir_b, "rules.toml"), "w", encoding="utf-8") as fh:
+                fh.write(cfg_b)
 
-        monkeypatch.chdir(dir_a)
-        res_a = betterleaks.scan_string("DIRA_1234 DIRB_1234", config_path="rules.toml")
-        assert [f.rule_id for f in res_a] == ["dir-a"]
-        assert os.path.abspath("rules.toml") in _scanner_cache
+            os.chdir(dir_a)
+            res_a = betterleaks.scan_string(
+                "DIRA_1234 DIRB_1234", config_path="rules.toml"
+            )
+            assert [f.rule_id for f in res_a] == ["dir-a"]
+            assert os.path.abspath("rules.toml") in _scanner_cache
 
-        monkeypatch.chdir(dir_b)
-        res_b = betterleaks.scan_string("DIRA_1234 DIRB_1234", config_path="rules.toml")
-        assert [f.rule_id for f in res_b] == ["dir-b"]
-        assert get_cached_backing("rules.toml") is not get_cached_backing(
-            os.path.join(dir_a, "rules.toml")
-        )
+            os.chdir(dir_b)
+            res_b = betterleaks.scan_string(
+                "DIRA_1234 DIRB_1234", config_path="rules.toml"
+            )
+            assert [f.rule_id for f in res_b] == ["dir-b"]
+            assert get_cached_backing("rules.toml") is not get_cached_backing(
+                os.path.join(dir_a, "rules.toml")
+            )
+        finally:
+            os.chdir(orig_cwd)
 
 
 def test_cli_backing_fallback(monkeypatch):

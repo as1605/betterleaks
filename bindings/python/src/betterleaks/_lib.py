@@ -469,7 +469,10 @@ class _CLIBacking:
         data = self._parse_cli_output(proc)
         for finding in data.get("findings") or []:
             loc = finding.setdefault("location", {})
-            if not loc.get("path"):
+            reported = loc.get("path")
+            if not reported or os.path.normpath(reported) == os.path.normpath(
+                file_path
+            ):
                 loc["path"] = file_path
         return data
 
