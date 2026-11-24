@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Python package version to publish (e.g. 0.1.0 or 0.1.0rc1)
+        description: Python package version to publish (e.g. 2.0.0 or 2.0.0rc1)
         required: true
         type: string
 

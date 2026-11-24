@@ -34,9 +34,9 @@ pip install ./bindings/python
 
 ---
 
-## Python Quickstart (Typed)
+## Python Quickstart
 
-`betterleaks` is **PEP 561 typed** (includes a `py.typed` marker), so type checkers (`mypy`, `pyright`) and IDEs provide full static type checking and autocompletion out of the box.
+All scan results are returned as strongly typed Python dataclasses (`Finding`, `Match`, `Location`) with full type annotations across `scan_string`, `scan_file`, and `Scanner`.
 
 ### Scanning Strings & Files
 

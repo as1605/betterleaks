@@ -69,7 +69,7 @@ source prefilters. Recursive decoding is disabled unless requested.
 
 Install the combined Python bindings and CLI package (`pip install betterleaks`)
 and see the [Python package README](python/README.md) for API usage, custom
-scanners, typing support, and wheel builds.
+scanners, typed data models, and wheel builds.
 
 The standalone [C ABI smoke script](../examples/python/native_smoke.py) exercises `bl_scanner_scan_file` and raw buffer ownership:
 `bl_scanner_scan_file` accepts a length-delimited filesystem path and scans one
