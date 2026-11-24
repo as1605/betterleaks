@@ -3,12 +3,12 @@ name: Publish Python package
 on:
   push:
     tags:
-      - 'v2.*'
+      - 'python-v*'
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag to publish (defaults to current ref)
-        required: false
+      version:
+        description: Python package version to publish (e.g. 0.1.0 or 0.1.0rc1)
+        required: true
         type: string
 
 permissions: {}
@@ -23,21 +23,27 @@ jobs:
       python_version: ${{ steps.version.outputs.python_version }}
       upstream_version: ${{ steps.version.outputs.upstream_version }}
     steps:
+      # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - id: version
         shell: bash
         env:
-          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_VERSION: ${{ inputs.version }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          tag="${INPUT_TAG:-$REF_NAME}"
-          raw="${tag#v}"
-          if [[ ! "$raw" =~ ^2\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
-            echo "Unsupported release tag: $tag" >&2
+          py_ver="${INPUT_VERSION:-${REF_NAME#python-v}}"
+          if [[ ! "$py_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
+            echo "Unsupported PEP 440 Python version: $py_ver" >&2
             exit 1
           fi
-          py_ver="${raw/-rc./rc}"
-          echo "upstream_version=$raw" >> "$GITHUB_OUTPUT"
+          upstream_tag="$(git describe --tags --match 'v2.*' --abbrev=0 2>/dev/null || echo 'v0.0.0')"
+          upstream_ver="${upstream_tag#v}"
           echo "python_version=$py_ver" >> "$GITHUB_OUTPUT"
+          echo "upstream_version=$upstream_ver" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
@@ -54,14 +60,14 @@ jobs:
     runs-on: ubuntu-22.04
     if: >-
       github.repository == 'betterleaks/betterleaks' &&
-      (startsWith(github.ref, 'refs/tags/v2.') || github.event_name == 'workflow_dispatch')
+      (startsWith(github.ref, 'refs/tags/python-v') || github.event_name == 'workflow_dispatch')
     environment:
       name: pypi
       url: https://pypi.org/p/betterleaks
     permissions:
       id-token: write
     steps:
-      # v7.0.2 (download-artifact v7 matches upload-artifact v7)
+      # v7.0.2
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: python-*

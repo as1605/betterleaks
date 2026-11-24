@@ -30,5 +30,7 @@ In `betterleaks/betterleaks` -> **Settings** -> **Environments**, create an envi
 
 ## 3. Release Flow
 
-1. Pushing a tag matching `v2.*` (e.g. `v2.0.0` or `v2.0.0-rc.15`) triggers `.github/workflows/python-release.yml` (or it can be triggered manually via `workflow_dispatch`).
-2. The workflow updates `_version.py` from the tag (`v2.0.0-rc.15` -> PEP 440 `2.0.0rc15`, upstream `2.0.0-rc.15`), builds and tests platform wheels across macOS, Linux, and Windows plus the source distribution, and publishes them to PyPI via `pypa/gh-action-pypi-publish` with `attestations: true`.
+The Python package follows its own `0.x.y` versioning independent of upstream Go `v2.*` tags (while embedding the latest `v2.*` Go engine version in `__upstream_version__` and the CLI `--version` flag).
+
+1. Pushing a tag matching `python-v*` (e.g. `python-v0.1.0`) triggers `.github/workflows/python-release.yml` (or run manually via `workflow_dispatch` with a PEP 440 `version` input like `0.1.0`).
+2. The workflow stamps `_version.py`, builds and tests platform wheels across macOS, Linux, and Windows plus the source distribution, and publishes them to PyPI via `pypa/gh-action-pypi-publish` with `attestations: true`.

@@ -68,18 +68,10 @@ source prefilters. Recursive decoding is disabled unless requested.
 ## Use from Python
 
 Install the combined Python bindings and CLI package (`pip install betterleaks`)
-or see the [Python package README](python/README.md) for API usage, custom
-scanners, and wheel builds.
+and see the [Python package README](python/README.md) for API usage, custom
+scanners, typing support, and wheel builds.
 
-To load the raw shared library directly without the Python package, build the
-native artifact and run the smoke test (Apple Silicon example):
-
-```sh
-BETTERLEAKS_LIB_DIR="$PWD/dist/native/aarch64-apple-darwin/lib" python3 examples/python/native_smoke.py
-```
-
-The [runnable example](../examples/python/native_smoke.py) creates one scanner,
-scans text and a local file, decodes the result, and releases native allocations.
+The standalone [C ABI smoke script](../examples/python/native_smoke.py) exercises `bl_scanner_scan_file` and raw buffer ownership:
 `bl_scanner_scan_file` accepts a length-delimited filesystem path and scans one
 regular file through the Go filesystem source. It applies the configured input
 limit and prefilters and returns an error for archive inputs that need expansion.

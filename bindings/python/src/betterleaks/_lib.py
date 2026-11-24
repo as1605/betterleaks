@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import ctypes
 import json
 import os
@@ -240,9 +241,13 @@ class _CLIBacking:
     ) -> None:
         if config_path is not None:
             if not config_path or "\x00" in config_path:
-                raise BetterleaksError("config_path must be a non-empty path without NUL")
+                raise BetterleaksError(
+                    "config_path must be a non-empty path without NUL"
+                )
             if config_toml is None and not os.path.isfile(config_path):
-                raise BetterleaksError(f"failed to load config from {config_path}: file not found")
+                raise BetterleaksError(
+                    f"failed to load config from {config_path}: file not found"
+                )
         self._config_path = config_path
         self._config_toml = config_toml
         self._closed = False
@@ -369,7 +374,9 @@ class _NativeScannerBacking:
             options["config_toml"] = config_toml
         if config_path is not None:
             if not config_path or "\x00" in config_path:
-                raise BetterleaksError("config_path must be a non-empty path without NUL")
+                raise BetterleaksError(
+                    "config_path must be a non-empty path without NUL"
+                )
             options["config_path"] = config_path
         if workers:
             options["workers"] = workers
@@ -389,9 +396,7 @@ class _NativeScannerBacking:
         self, content: str, attributes: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         encoded = content.encode("utf-8")
-        attr_bytes = (
-            json.dumps(attributes).encode("utf-8") if attributes else None
-        )
+        attr_bytes = json.dumps(attributes).encode("utf-8") if attributes else None
         with self._lock:
             if self._handle is None:
                 raise BetterleaksError("Scanner is closed")
@@ -414,10 +419,12 @@ class _NativeScannerBacking:
                 self._lib.free_scanner(handle)
 
     def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception:
-            pass
+        if (
+            getattr(self, "_handle", None) is not None
+            and getattr(self, "_lib", None) is not None
+        ):
+            with contextlib.suppress(BetterleaksError, OSError, ctypes.ArgumentError):
+                self.close()
 
 
 _native_lib_instance: Optional[_NativeLibrary] = None
@@ -486,10 +493,8 @@ def _cleanup_cached_scanners() -> None:
         scanners = list(_scanner_cache.values())
         _scanner_cache.clear()
     for scanner in scanners:
-        try:
+        with contextlib.suppress(BetterleaksError, OSError, ctypes.ArgumentError):
             scanner.close()
-        except Exception:
-            pass
 
 
 atexit.register(_cleanup_cached_scanners)

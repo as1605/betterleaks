@@ -34,47 +34,47 @@ pip install ./bindings/python
 
 ---
 
-## Python Quickstart
+## Python Quickstart (Typed)
+
+`betterleaks` is **PEP 561 typed** (includes a `py.typed` marker), so type checkers (`mypy`, `pyright`) and IDEs provide full static type checking and autocompletion out of the box.
 
 ### Scanning Strings & Files
 
 ```python
+from typing import List
 import betterleaks
+from betterleaks import BetterleaksError, Finding
 
 content = """
 export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"
 export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 """
 
-findings = betterleaks.scan_string(content)
+try:
+    findings: List[Finding] = betterleaks.scan_string(content)
+    for finding in findings:
+        print(f"[{finding.rule_id}] Secret: {finding.secret}")
+        print(f"  Confidence: {finding.confidence}")
+        print(f"  Line: {finding.location.start_line}, Col: {finding.location.start_column}")
+        print(f"  Fingerprint: {finding.match.fingerprint}")
 
-for finding in findings:
-    print(f"[{finding.rule_id}] Secret: {finding.secret}")
-    print(f"  Confidence: {finding.confidence}")
-    print(f"  Line: {finding.location.start_line}, Col: {finding.location.start_column}")
-    print(f"  Description: {finding.description}")
+        if finding.component_sets:
+            print(f"  Correlated components: {len(finding.component_sets)}")
 
-    if finding.component_sets:
-        print(f"  Correlated components: {len(finding.component_sets)}")
-
-file_findings = betterleaks.scan_file("path/to/settings.env")
+    file_findings: List[Finding] = betterleaks.scan_file("path/to/settings.env")
+except BetterleaksError as err:
+    print(f"Scan failed: {err}")
 ```
 
 ### Reusable Scanners & Custom Configuration
 
-Use `create_scanner` (or `Scanner`) as a context manager when scanning with inline TOML rules or custom config files:
+Use `create_scanner` (or `Scanner`) as a context manager when scanning with inline TOML rules, custom config files, or custom limits:
 
 ```python
+from typing import List
 import betterleaks
+from betterleaks import Finding, Scanner
 
-with betterleaks.create_scanner(config_path="betterleaks.toml") as scanner:
-    findings = scanner.scan_string("API_KEY = 'XYZ12345'")
-    file_findings = scanner.scan_file("config.py")
-```
-
-Inline TOML configuration is also supported:
-
-```python
 toml_rules = """
 [extend]
 useDefault = true
@@ -86,8 +86,13 @@ regex = '''INTERNAL_[A-Z0-9]{16}'''
 keywords = ["INTERNAL_"]
 """
 
+scanner: Scanner
 with betterleaks.create_scanner(config_toml=toml_rules) as scanner:
-    findings = scanner.scan_string("token = INTERNAL_1234567890ABCDEF")
+    findings: List[Finding] = scanner.scan_string(
+        "token = INTERNAL_1234567890ABCDEF",
+        attributes={"path": "config.env"},
+    )
+    file_findings: List[Finding] = scanner.scan_file("config.py")
 ```
 
 ---
@@ -104,24 +109,55 @@ betterleaks dir path/to/project
 
 ---
 
-## Data Models
+## Public API & Typed Data Models
 
-### `Finding`
+### Functions & Classes
+
+| Symbol | Signature | Description |
+| --- | --- | --- |
+| `scan_string` | `(content: str, config_path: Optional[str] = None) -> List[Finding]` | Scan in-memory text using a cached scanner. |
+| `scan_file` | `(file_path: str, config_path: Optional[str] = None) -> List[Finding]` | Scan a regular file using a cached scanner. |
+| `create_scanner` | `(config_path: Optional[str] = None, config_toml: Optional[str] = None, workers: int = 0, max_decode_depth: int = 0, max_input_bytes: Optional[int] = None, max_findings: Optional[int] = None) -> Scanner` | Create a reusable `Scanner` context manager with custom rules and limits. |
+| `Scanner` | `.scan_string(content: str, attributes: Optional[Dict[str, str]] = None) -> List[Finding]`<br>`.scan_file(file_path: str) -> List[Finding]`<br>`.close() -> None` | Handle-backed scanner supporting `with` statements. |
+| `BetterleaksError` | `class BetterleaksError(Exception)` | Raised on invalid config, missing/non-regular files, limit errors, or native failures. |
+
+### `Finding` (dataclass, `collections.abc.Mapping`)
 
 | Attribute | Type | Description |
 | --- | --- | --- |
 | `rule_id` | `str` | Identifier of the triggered rule (e.g. `github-pat`, `aws-access-token`). |
 | `description` | `str` | Description of the credential risk. |
 | `confidence` | `str` | Detection confidence rating (`low`, `medium`, `high`). |
-| `secret` | `str` | Matched credential / secret value (alias for `match.value`). |
-| `file` | `Optional[str]` | Target file path, when scanning files. |
-| `match` | `Match` | Match object with `full`, `value`, `fingerprint`, and `captures`. |
-| `location` | `Location` | `path`, `start_line`, `end_line`, `start_column`, `end_column`. |
-| `component_sets` | `List[dict]` | Correlated multi-part component findings. |
-| `encodings` | `List[str]` | Encodings detected during decode passes. |
+| `match` | `Match` | Match details (`full`, `value`, `fingerprint`, `line`, `captures`). |
+| `location` | `Location` | Source coordinates (`path`, `start_line`, `end_line`, `start_column`, `end_column`). |
 | `tags` | `List[str]` | Rule tags. |
+| `raw` | `Dict[str, Any]` | Raw decoded JSON object for any additional engine fields. |
+| `secret` *(property)* | `str` | Convenience alias for `match.value`. |
+| `file` *(property)* | `Optional[str]` | Convenience alias for `location.path`. |
+| `component_sets` *(property)* | `List[Dict[str, Any]]` | Correlated multi-part component findings. |
+| `encodings` *(property)* | `List[str]` | Encodings detected during decode passes. |
 
-`Finding` implements `collections.abc.Mapping` and supports both attribute access (`finding.rule_id`) and dictionary subscripting (`finding["rule_id"]`).
+`Finding` implements `collections.abc.Mapping` and supports both typed attribute access (`finding.rule_id`) and dictionary subscripting (`finding["rule_id"]`, `finding.to_dict()`).
+
+### `Match` (dataclass)
+
+| Attribute | Type | Default | Description |
+| --- | --- | --- | --- |
+| `full` | `str` | `""` | Full matched text including surrounding pattern context. |
+| `value` | `str` | `""` | Extracted secret/credential value. |
+| `fingerprint` | `Optional[str]` | `None` | Deterministic finding fingerprint. |
+| `line` | `Optional[str]` | `None` | Matched line text, if included. |
+| `captures` | `Dict[str, str]` | `{}` | Named regex capture groups. |
+
+### `Location` (dataclass)
+
+| Attribute | Type | Default | Description |
+| --- | --- | --- | --- |
+| `path` | `Optional[str]` | `None` | Target file path (populated by `scan_file`). |
+| `start_line` | `int` | `0` | 1-based start line number. |
+| `end_line` | `int` | `0` | 1-based end line number. |
+| `start_column` | `int` | `0` | 1-based start byte column. |
+| `end_column` | `int` | `0` | 1-based end byte column. |
 
 ---
 

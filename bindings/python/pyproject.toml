@@ -69,7 +69,7 @@ target-version = "py38"
 src = ["src"]
 
 [tool.ruff.lint]
-ignore = ["UP006", "UP045", "FA100"]
+ignore = ["UP006", "UP045", "FA100", "PYI034"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["betterleaks"]
