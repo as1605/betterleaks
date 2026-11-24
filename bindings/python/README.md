@@ -104,7 +104,7 @@ The `betterleaks` CLI is available directly in your Python environment's `PATH`:
 ```bash
 betterleaks --version
 betterleaks git .
-betterleaks dir path/to/project
+betterleaks filesystem path/to/project
 ```
 
 ---

@@ -30,18 +30,33 @@ def get_cli_filename() -> str:
     return "betterleaks.exe" if platform.system().lower() == "windows" else "betterleaks"
 
 
-def get_upstream_version() -> str:
-    version = "2.0.0-rc.14"
+def get_package_version() -> str:
+    version = "2.0.0"
     version_file = os.path.join(_HERE, "src", "betterleaks", "_version.py")
     try:
         with open(version_file, "r", encoding="utf-8") as f:
             for line in f:
-                if line.startswith("__upstream_version__"):
+                if line.startswith("__version__"):
                     version = line.split("=", 1)[1].strip().strip("\"'")
                     break
     except OSError:
         pass
     return version
+
+
+def get_engine_version(repo_root: str) -> str:
+    try:
+        out = subprocess.check_output(
+            ["git", "describe", "--tags", "--match", "v2.*", "--always"],
+            cwd=repo_root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if out and not any(ch in out for ch in " \t\r\n\"'\\"):
+            return out.lstrip("v")
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return get_package_version()
 
 
 def find_go_binary() -> Optional[str]:
@@ -98,7 +113,7 @@ def _raise_missing_toolchain(reason: str) -> None:
 BETTERLEAKS BUILD ERROR: {reason}
 ================================================================================
 Building 'betterleaks' from source requires:
-  • A full Betterleaks repository checkout (with go.mod and bindings/c)
+  • A Betterleaks Go source tree (included in sdist or full git checkout)
   • Go compiler (version 1.26+) and a C compiler (for native bindings on macOS/Linux)
 
 Please install a pre-built binary wheel instead:
@@ -112,6 +127,10 @@ Or build from a git clone of the repository:
 """
     print(err_msg, file=sys.stderr)
     raise SystemExit(1)
+
+
+def _use_prebuilt() -> bool:
+    return os.environ.get("BETTERLEAKS_USE_PREBUILT") == "1"
 
 
 def _find_prebuilt_native_lib(repo_root: Optional[str]) -> Optional[str]:
@@ -152,27 +171,31 @@ def build_go_shared_library(target_dir: str) -> str:
     if platform.system().lower() == "windows":
         return ""
 
+    target_dir = os.path.abspath(target_dir)
     os.makedirs(target_dir, exist_ok=True)
     lib_name = get_lib_filename()
     out_lib = os.path.join(target_dir, lib_name)
 
-    if os.path.isfile(out_lib) and os.path.getsize(out_lib) > 0:
-        return out_lib
-
     repo_root = find_repo_root()
-    prebuilt = _find_prebuilt_native_lib(repo_root)
-    if prebuilt:
-        shutil.copy2(prebuilt, out_lib)
-        return out_lib
+    if _use_prebuilt() or repo_root is None:
+        prebuilt = _find_prebuilt_native_lib(repo_root)
+        if prebuilt:
+            if os.path.abspath(prebuilt) != os.path.abspath(out_lib):
+                shutil.copy2(prebuilt, out_lib)
+            return out_lib
 
     go_bin = find_go_binary()
     if not go_bin:
         _raise_missing_toolchain("Go compiler ('go') not found in PATH")
     if not repo_root:
-        _raise_missing_toolchain("Betterleaks Go source tree (go.mod / bindings/c) not found")
+        _raise_missing_toolchain(
+            "Betterleaks Go source tree (go.mod / bindings/c) not found"
+        )
 
-    upstream_version = get_upstream_version()
-    ldflags = f"-X github.com/betterleaks/betterleaks/v2/version.Version={upstream_version}"
+    engine_version = get_engine_version(repo_root)
+    ldflags = (
+        f"-X github.com/betterleaks/betterleaks/v2/version.Version={engine_version}"
+    )
     if sys.platform == "darwin":
         ldflags += f" -extldflags=-Wl,-install_name,@rpath/{lib_name}"
 
@@ -210,32 +233,31 @@ def build_go_shared_library(target_dir: str) -> str:
 
 
 def build_go_cli_binary(target_dir: str) -> str:
-    bin_dir = os.path.join(target_dir, "bin")
+    bin_dir = os.path.abspath(os.path.join(target_dir, "bin"))
     os.makedirs(bin_dir, exist_ok=True)
     cli_name = get_cli_filename()
     out_bin = os.path.join(bin_dir, cli_name)
 
-    if os.path.isfile(out_bin) and os.path.getsize(out_bin) > 0:
-        if sys.platform != "win32":
-            os.chmod(out_bin, 0o755)
-        return out_bin
-
-    local_bin = os.path.join(_HERE, "src", "betterleaks", "bin", cli_name)
-    if os.path.isfile(local_bin) and os.path.getsize(local_bin) > 0:
-        shutil.copy2(local_bin, out_bin)
-        if sys.platform != "win32":
-            os.chmod(out_bin, 0o755)
-        return out_bin
+    repo_root = find_repo_root()
+    if _use_prebuilt() or repo_root is None:
+        local_bin = os.path.join(_HERE, "src", "betterleaks", "bin", cli_name)
+        if os.path.isfile(local_bin) and os.path.getsize(local_bin) > 0:
+            if os.path.abspath(local_bin) != os.path.abspath(out_bin):
+                shutil.copy2(local_bin, out_bin)
+            if sys.platform != "win32":
+                os.chmod(out_bin, 0o755)
+            return out_bin
 
     go_bin = find_go_binary()
-    repo_root = find_repo_root()
     if not go_bin:
         _raise_missing_toolchain("Go compiler ('go') not found in PATH")
     if not repo_root:
         _raise_missing_toolchain("Betterleaks Go source tree (go.mod) not found")
 
-    upstream_version = get_upstream_version()
-    ldflags = f"-s -w -X=github.com/betterleaks/betterleaks/v2/version.Version={upstream_version}"
+    engine_version = get_engine_version(repo_root)
+    ldflags = (
+        f"-s -w -X=github.com/betterleaks/betterleaks/v2/version.Version={engine_version}"
+    )
     cmd = [
         go_bin,
         "build",
@@ -265,15 +287,12 @@ def build_go_cli_binary(target_dir: str) -> str:
 
 class CustomBuildPy(build_py):
     def run(self):
-        local_dir = os.path.join(_HERE, "src", "betterleaks")
-        build_go_shared_library(local_dir)
-        build_go_cli_binary(local_dir)
-
+        # Always run super().run() first so package_data copy happens before
+        # fresh Go build into build_lib (avoiding stale binaries in src/).
+        super().run()
         target_dir = os.path.join(self.build_lib, "betterleaks")
         build_go_shared_library(target_dir)
         build_go_cli_binary(target_dir)
-
-        super().run()
 
 
 class CustomDevelop(develop):

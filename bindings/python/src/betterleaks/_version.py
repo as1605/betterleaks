@@ -1,4 +1,3 @@
-"""Version metadata for Betterleaks Python bindings."""
+"""Version metadata for Betterleaks Python package."""
 
 __version__ = "2.0.0"
-__upstream_version__ = "2.0.0-rc.14"

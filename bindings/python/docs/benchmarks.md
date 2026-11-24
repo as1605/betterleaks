@@ -51,5 +51,5 @@ Every iteration is executed in a **brand-new, isolated OS process** (spawned via
 | Python service, web hook, stream consumer, or data pipeline | **Library** — always wins on repeated calls |
 | Pre-commit hook or CI step scanning a batch of files | **Library** — orders of magnitude faster than looping subprocess calls |
 | One-off shell pipeline or cron job | **Direct CLI** — simpler invocation, comparable cold-start cost |
-| Full repository scan (`betterleaks git ...`, `betterleaks dir ...`) | **Direct CLI** — uses native Go parallel filesystem/git walker |
+| Full repository scan (`betterleaks git ...`, `betterleaks filesystem ...`) | **Direct CLI** — uses native Go parallel filesystem/git walker |
 | Integrating into existing Python tooling | **Library** — typed `Finding` objects, no JSON parsing |

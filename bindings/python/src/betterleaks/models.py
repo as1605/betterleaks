@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class BetterleaksError(Exception):
@@ -80,10 +80,6 @@ class Finding(Mapping):
     tags: List[str] = field(default_factory=list)
     raw: Dict[str, Any] = field(default_factory=dict)
 
-    _EXCLUDED_KEYS: ClassVar[frozenset[str]] = frozenset(
-        {"from_dict", "to_dict", "raw"}
-    )
-
     @property
     def secret(self) -> str:
         """Convenience property returning the matched secret value."""
@@ -119,35 +115,27 @@ class Finding(Mapping):
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert finding back to a standard dictionary."""
-        return {
-            "rule_id": self.rule_id,
-            "description": self.description,
-            "confidence": self.confidence,
-            "secret": self.secret,
-            "match": self.match.to_dict(),
-            "location": self.location.to_dict(),
-            "tags": self.tags,
-        }
+        """Convert finding back to a dictionary, preserving extra report fields."""
+        res = dict(self.raw)
+        res.update(
+            {
+                "rule_id": self.rule_id,
+                "description": self.description,
+                "confidence": self.confidence,
+                "secret": self.secret,
+                "file": self.file,
+                "match": self.match.to_dict(),
+                "location": self.location.to_dict(),
+                "tags": list(self.tags),
+            }
+        )
+        return res
 
     def __getitem__(self, key: str) -> Any:
         """Allow dictionary-style access (e.g., finding['rule_id'] or finding['secret'])."""
-        if key == "secret":
-            return self.secret
-        if key == "file":
-            return self.file
-        if (
-            hasattr(self, key)
-            and not key.startswith("_")
-            and key not in self._EXCLUDED_KEYS
-        ):
-            val = getattr(self, key)
-            if not callable(val):
-                if isinstance(val, (Match, Location)):
-                    return val.to_dict()
-                return val
-        if key in self.raw:
-            return self.raw[key]
+        data = self.to_dict()
+        if key in data:
+            return data[key]
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
@@ -159,18 +147,7 @@ class Finding(Mapping):
     def __contains__(self, key: object) -> bool:
         if not isinstance(key, str):
             return False
-        if key in ("secret", "file"):
-            return True
-        if (
-            hasattr(self, key)
-            and not key.startswith("_")
-            and key not in self._EXCLUDED_KEYS
-        ):
-            return not callable(getattr(self, key))
-        return key in self.raw
+        return key in self.to_dict()
 
     def get(self, key: str, default: Any = None) -> Any:
-        try:
-            return self[key]
-        except KeyError:
-            return default
+        return self.to_dict().get(key, default)

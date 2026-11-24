@@ -10,6 +10,10 @@ on:
         description: Python package version to publish (e.g. 2.0.0 or 2.0.0rc1)
         required: true
         type: string
+      ref:
+        description: Git ref or tag to build from (defaults to selected ref)
+        required: false
+        type: string
 
 permissions: {}
 
@@ -20,19 +24,14 @@ jobs:
     permissions:
       contents: read
     outputs:
+      ref: ${{ steps.version.outputs.ref }}
       python_version: ${{ steps.version.outputs.python_version }}
-      upstream_version: ${{ steps.version.outputs.upstream_version }}
     steps:
-      # v6.0.2
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - id: version
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REF: ${{ inputs.ref }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           py_ver="${INPUT_VERSION:-${REF_NAME#python-v}}"
@@ -40,10 +39,8 @@ jobs:
             echo "Unsupported PEP 440 Python version: $py_ver" >&2
             exit 1
           fi
-          upstream_tag="$(git describe --tags --match 'v2.*' --abbrev=0 2>/dev/null || echo 'v0.0.0')"
-          upstream_ver="${upstream_tag#v}"
+          echo "ref=${INPUT_REF}" >> "$GITHUB_OUTPUT"
           echo "python_version=$py_ver" >> "$GITHUB_OUTPUT"
-          echo "upstream_version=$upstream_ver" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
@@ -51,8 +48,8 @@ jobs:
       contents: read
     uses: ./.github/workflows/python-bindings.yml
     with:
+      ref: ${{ needs.prepare.outputs.ref }}
       python_version: ${{ needs.prepare.outputs.python_version }}
-      upstream_version: ${{ needs.prepare.outputs.upstream_version }}
 
   publish:
     name: Publish to PyPI

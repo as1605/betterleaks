@@ -4,6 +4,7 @@ include setup.py
 
 recursive-include src/betterleaks *.py py.typed
 recursive-include tests *.py
+graft _upstream
 prune src/betterleaks/bin
 global-exclude .git*
 global-exclude *.py[cod] *.so *.dylib *.dll

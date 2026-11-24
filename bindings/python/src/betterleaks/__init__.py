@@ -6,7 +6,7 @@ High-performance secret and credential detection engine powered by Go.
 from typing import Dict, List, Optional
 
 from betterleaks._lib import create_backing, get_cached_backing
-from betterleaks._version import __upstream_version__, __version__
+from betterleaks._version import __version__
 from betterleaks.models import BetterleaksError, Finding, Location, Match
 
 __all__ = [
@@ -15,7 +15,6 @@ __all__ = [
     "Location",
     "Match",
     "Scanner",
-    "__upstream_version__",
     "__version__",
     "create_scanner",
     "scan_file",

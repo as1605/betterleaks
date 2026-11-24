@@ -1,11 +1,12 @@
 import os
 import tempfile
+import zipfile
 
 import pytest
 
 import betterleaks
 from betterleaks import BetterleaksError
-from betterleaks._lib import _CLIBacking
+from betterleaks._lib import _CLIBacking, _scanner_cache, get_cached_backing
 
 GH_TOKEN = "gh" + "p_aB3dE5fG7hI9jK1mN3pQ5rS7tU9vW1xY3zA5"
 
@@ -57,8 +58,40 @@ keywords = ["FILERULE_"]
             os.remove(cfg_path)
 
 
-def test_cli_backing_fallback():
-    """Verify the CLI subprocess fallback (used on Windows) produces identical Findings."""
+def test_relative_config_cache_key_resolves_abspath(monkeypatch):
+    cfg_a = (
+        "[[rules]]\nid = 'dir-a'\nregex = '''DIRA_[0-9]{4}'''\nkeywords = ['DIRA_']\n"
+    )
+    cfg_b = (
+        "[[rules]]\nid = 'dir-b'\nregex = '''DIRB_[0-9]{4}'''\nkeywords = ['DIRB_']\n"
+    )
+
+    with tempfile.TemporaryDirectory() as dir_a, tempfile.TemporaryDirectory() as dir_b:
+        with open(os.path.join(dir_a, "rules.toml"), "w", encoding="utf-8") as fh:
+            fh.write(cfg_a)
+        with open(os.path.join(dir_b, "rules.toml"), "w", encoding="utf-8") as fh:
+            fh.write(cfg_b)
+
+        monkeypatch.chdir(dir_a)
+        res_a = betterleaks.scan_string("DIRA_1234 DIRB_1234", config_path="rules.toml")
+        assert [f.rule_id for f in res_a] == ["dir-a"]
+        assert os.path.abspath("rules.toml") in _scanner_cache
+
+        monkeypatch.chdir(dir_b)
+        res_b = betterleaks.scan_string("DIRA_1234 DIRB_1234", config_path="rules.toml")
+        assert [f.rule_id for f in res_b] == ["dir-b"]
+        assert get_cached_backing("rules.toml") is not get_cached_backing(
+            os.path.join(dir_a, "rules.toml")
+        )
+
+
+def test_cli_backing_fallback(monkeypatch):
+    """Verify the CLI subprocess fallback (used on Windows) mirrors native semantics."""
+    # Inherited CLI env vars must not override explicit inline config or trigger validation.
+    monkeypatch.setenv("BETTERLEAKS_VALIDATE", "true")
+    monkeypatch.setenv("BETTERLEAKS_ANALYZE", "true")
+    monkeypatch.setenv("BETTERLEAKS_CONFIG", "/nonexistent/override.toml")
+
     backing = _CLIBacking()
     try:
         res = backing.scan_string(f"token = '{GH_TOKEN}'")
@@ -90,3 +123,39 @@ def test_cli_backing_fallback():
                 os.remove(path)
     finally:
         backing.close()
+
+    # Inline config_toml must win even when BETTERLEAKS_CONFIG is set in environment.
+    inline = "[[rules]]\nid = 'win-inline'\nregex = '''WININLINE_[A-Z]{4}'''\nkeywords = ['WININLINE_']\n"
+    inline_backing = _CLIBacking(config_toml=inline)
+    try:
+        res = inline_backing.scan_string("val = WININLINE_TEST")
+        assert [item["rule_id"] for item in res.get("findings") or []] == ["win-inline"]
+    finally:
+        inline_backing.close()
+
+    # Limits and archive rejection must match bindings/c semantics.
+    limited = _CLIBacking(max_input_bytes=16, max_findings=1)
+    try:
+        with pytest.raises(BetterleaksError, match="max_input_bytes"):
+            limited.scan_string("x" * 32)
+        with pytest.raises(BetterleaksError, match="max_findings"):
+            limited.scan_string("a") if False else limited._parse_cli_output(
+                type("P", (), {"returncode": 0, "stdout": b"[{}, {}]", "stderr": b""})()
+            )
+    finally:
+        limited.close()
+
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as zf:
+        zpath = zf.name
+    try:
+        with zipfile.ZipFile(zpath, "w") as archive:
+            archive.writestr("secret.txt", f"TOKEN={GH_TOKEN}\n")
+        archive_backing = _CLIBacking()
+        try:
+            with pytest.raises(BetterleaksError, match="archive"):
+                archive_backing.scan_file(zpath)
+        finally:
+            archive_backing.close()
+    finally:
+        if os.path.exists(zpath):
+            os.remove(zpath)

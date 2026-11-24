@@ -30,7 +30,7 @@ In `betterleaks/betterleaks` -> **Settings** -> **Environments**, create an envi
 
 ## 3. Release Flow
 
-The Python package starts at `2.0.0` (while embedding the latest `v2.*` Go engine version in `__upstream_version__` and the CLI `--version` flag).
+The Python package starts at `2.0.0`.
 
 1. Pushing a tag matching `python-v*` (e.g. `python-v2.0.0`) triggers `.github/workflows/python-release.yml` (or run manually via `workflow_dispatch` with a PEP 440 `version` input like `2.0.0`).
 2. The workflow stamps `_version.py`, builds and tests platform wheels across macOS, Linux, and Windows plus the source distribution, and publishes them to PyPI via `pypa/gh-action-pypi-publish` with `attestations: true`.

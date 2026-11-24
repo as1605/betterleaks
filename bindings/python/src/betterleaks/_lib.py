@@ -11,12 +11,52 @@ import platform
 import subprocess
 import sys
 import threading
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 from betterleaks.cli import get_binary_path
 from betterleaks.models import BetterleaksError
 
 _EXPECTED_ABI_VERSION = 1
+_DEFAULT_MAX_INPUT_BYTES = 8 << 20
+_MAX_INPUT_BYTES = 64 << 20
+_DEFAULT_MAX_FINDINGS = 10_000
+_MAX_FINDINGS = 100_000
+_MAX_WORKERS = 1024
+_SCANNER_CACHE_MAX_SIZE = 16
+
+_ARCHIVE_EXTENSIONS = (
+    ".zip",
+    ".tar",
+    ".gz",
+    ".tgz",
+    ".bz2",
+    ".tbz2",
+    ".xz",
+    ".txz",
+    ".zst",
+    ".tzst",
+    ".lz4",
+    ".rar",
+    ".7z",
+    ".br",
+    ".lz",
+    ".sz",
+    ".zz",
+)
+
+_ARCHIVE_MAGIC_PREFIXES = (
+    b"PK\x03\x04",
+    b"PK\x05\x06",
+    b"PK\x07\x08",
+    b"\x1f\x8b",
+    b"BZh",
+    b"\xfd7zXZ\x00",
+    b"\x28\xb5\x2f\xfd",
+    b"Rar!\x1a\x07",
+    b"7z\xbc\xaf\x27\x1c",
+    b'\x04"M\x18',
+)
 
 
 class _BlBuffer(ctypes.Structure):
@@ -87,6 +127,44 @@ def _find_library() -> Optional[str]:
                 return candidate
 
     return None
+
+
+def _is_recognized_archive(file_path: str) -> bool:
+    lower = file_path.lower()
+    if lower.endswith(_ARCHIVE_EXTENSIONS):
+        return True
+    try:
+        with open(file_path, "rb") as fh:
+            head = fh.read(512)
+    except OSError:
+        return False
+    if any(head.startswith(prefix) for prefix in _ARCHIVE_MAGIC_PREFIXES):
+        return True
+    # POSIX ustar tar magic at byte offset 257.
+    return len(head) >= 263 and head[257:263] == b"ustar\x00"
+
+
+def _validate_scanner_limits(
+    workers: int,
+    max_decode_depth: int,
+    max_input_bytes: Optional[int],
+    max_findings: Optional[int],
+) -> Tuple[int, int]:
+    if workers < 0 or workers > _MAX_WORKERS:
+        raise BetterleaksError(f"workers must be between 0 and {_MAX_WORKERS}")
+    if max_decode_depth < 0:
+        raise BetterleaksError("max_decode_depth must be non-negative")
+    effective_input = (
+        _DEFAULT_MAX_INPUT_BYTES if max_input_bytes is None else max_input_bytes
+    )
+    if effective_input < 1 or effective_input > _MAX_INPUT_BYTES:
+        raise BetterleaksError(
+            f"max_input_bytes must be between 1 and {_MAX_INPUT_BYTES}"
+        )
+    effective_findings = _DEFAULT_MAX_FINDINGS if max_findings is None else max_findings
+    if effective_findings < 1 or effective_findings > _MAX_FINDINGS:
+        raise BetterleaksError(f"max_findings must be between 1 and {_MAX_FINDINGS}")
+    return effective_input, effective_findings
 
 
 class _NativeLibrary:
@@ -238,6 +316,10 @@ class _CLIBacking:
         self,
         config_path: Optional[str] = None,
         config_toml: Optional[str] = None,
+        workers: int = 0,
+        max_decode_depth: int = 0,
+        max_input_bytes: Optional[int] = None,
+        max_findings: Optional[int] = None,
     ) -> None:
         if config_path is not None:
             if not config_path or "\x00" in config_path:
@@ -248,8 +330,15 @@ class _CLIBacking:
                 raise BetterleaksError(
                     f"failed to load config from {config_path}: file not found"
                 )
+        effective_input, effective_findings = _validate_scanner_limits(
+            workers, max_decode_depth, max_input_bytes, max_findings
+        )
         self._config_path = config_path
         self._config_toml = config_toml
+        self._workers = workers
+        self._max_decode_depth = max_decode_depth
+        self._max_input_bytes = effective_input
+        self._max_findings = effective_findings
         self._closed = False
         self._lock = threading.Lock()
 
@@ -260,15 +349,29 @@ class _CLIBacking:
 
     def _build_env_and_args(self) -> Tuple[Dict[str, str], List[str]]:
         env = os.environ.copy()
-        args: List[str] = []
+        # Keep API scans strictly detection-only and prevent inherited CLI env vars
+        # from overriding explicit Scanner configuration.
+        for var in (
+            "BETTERLEAKS_VALIDATE",
+            "BETTERLEAKS_ANALYZE",
+            "BETTERLEAKS_CONFIG",
+            "BETTERLEAKS_CONFIG_TOML",
+        ):
+            env.pop(var, None)
+
+        args: List[str] = [
+            f"--max-decode-depth={self._max_decode_depth}",
+        ]
+        if self._workers > 0:
+            args.append(f"--jobs={self._workers}")
+
         if self._config_toml is not None:
             env["BETTERLEAKS_CONFIG_TOML"] = self._config_toml
         elif self._config_path:
             args.extend(["-c", self._config_path])
         return env, args
 
-    @staticmethod
-    def _parse_cli_output(proc: subprocess.CompletedProcess) -> Dict[str, Any]:
+    def _parse_cli_output(self, proc: subprocess.CompletedProcess) -> Dict[str, Any]:
         if proc.returncode != 0:
             err = proc.stderr.decode("utf-8", errors="replace").strip()
             raise BetterleaksError(
@@ -282,15 +385,27 @@ class _CLIBacking:
         except json.JSONDecodeError as err:
             raise BetterleaksError(f"Failed to parse CLI JSON output: {err}") from err
         if isinstance(payload, list):
-            return {"findings": payload}
-        if isinstance(payload, dict):
-            return payload
-        raise BetterleaksError("Unexpected JSON output structure from betterleaks CLI")
+            result = {"findings": payload}
+        elif isinstance(payload, dict):
+            result = payload
+        else:
+            raise BetterleaksError(
+                "Unexpected JSON output structure from betterleaks CLI"
+            )
+
+        findings = result.get("findings") or []
+        if len(findings) > self._max_findings:
+            raise BetterleaksError("scan exceeds max_findings")
+        return result
 
     def scan_string(
         self, content: str, attributes: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         self._ensure_open()
+        encoded = content.encode("utf-8")
+        if len(encoded) > self._max_input_bytes:
+            raise BetterleaksError("input exceeds max_input_bytes")
+
         binary = get_binary_path()
         env, cfg_args = self._build_env_and_args()
         cmd = [
@@ -309,7 +424,7 @@ class _CLIBacking:
                 cmd.extend(["--set-attr", f"{k}={v}"])
         proc = subprocess.run(
             cmd,
-            input=content.encode("utf-8"),
+            input=encoded,
             env=env,
             capture_output=True,
             check=False,
@@ -324,6 +439,12 @@ class _CLIBacking:
             raise BetterleaksError(f"failed to read file {file_path}: file not found")
         if not os.path.isfile(file_path):
             raise BetterleaksError("scan_file requires a regular file")
+        if os.path.getsize(file_path) > self._max_input_bytes:
+            raise BetterleaksError("file exceeds max_input_bytes")
+        if _is_recognized_archive(file_path):
+            raise BetterleaksError(
+                "archive inputs are not supported by scan_file; use the CLI to scan archives"
+            )
 
         binary = get_binary_path()
         env, cfg_args = self._build_env_and_args()
@@ -334,6 +455,7 @@ class _CLIBacking:
             "--no-banner",
             "--no-color",
             "--log-level=error",
+            "--max-archive-depth=0",
             "-o",
             "-",
             *cfg_args,
@@ -431,7 +553,8 @@ _native_lib_instance: Optional[_NativeLibrary] = None
 _native_lib_checked = False
 _native_lib_lock = threading.Lock()
 
-_scanner_cache: Dict[Tuple[Optional[str], Optional[str]], Any] = {}
+_default_scanner: Optional[Any] = None
+_scanner_cache: OrderedDict[str, Any] = OrderedDict()
 _scanner_cache_lock = threading.Lock()
 
 
@@ -472,26 +595,53 @@ def create_backing(
             max_input_bytes=max_input_bytes,
             max_findings=max_findings,
         )
-    return _CLIBacking(config_path=config_path, config_toml=config_toml)
+    return _CLIBacking(
+        config_path=config_path,
+        config_toml=config_toml,
+        workers=workers,
+        max_decode_depth=max_decode_depth,
+        max_input_bytes=max_input_bytes,
+        max_findings=max_findings,
+    )
 
 
 def get_cached_backing(config_path: Optional[str] = None):
-    key = (config_path, None)
-    cached = _scanner_cache.get(key)
-    if cached is not None:
-        return cached
+    global _default_scanner
+    if config_path is None:
+        if _default_scanner is not None:
+            return _default_scanner
+        with _scanner_cache_lock:
+            if _default_scanner is None:
+                _default_scanner = create_backing(config_path=None)
+            return _default_scanner
+
+    if not config_path or "\x00" in config_path:
+        raise BetterleaksError("config_path must be a non-empty path without NUL")
+    resolved_path = os.path.abspath(config_path)
+
     with _scanner_cache_lock:
-        cached = _scanner_cache.get(key)
-        if cached is None:
-            cached = create_backing(config_path=config_path)
-            _scanner_cache[key] = cached
-        return cached
+        cached = _scanner_cache.get(resolved_path)
+        if cached is not None:
+            _scanner_cache.move_to_end(resolved_path)
+            return cached
+
+        backing = create_backing(config_path=resolved_path)
+        _scanner_cache[resolved_path] = backing
+        while len(_scanner_cache) > _SCANNER_CACHE_MAX_SIZE:
+            _, evicted = _scanner_cache.popitem(last=False)
+            with contextlib.suppress(BetterleaksError, OSError, ctypes.ArgumentError):
+                evicted.close()
+        return backing
 
 
 def _cleanup_cached_scanners() -> None:
+    global _default_scanner
     with _scanner_cache_lock:
         scanners = list(_scanner_cache.values())
         _scanner_cache.clear()
+        if _default_scanner is not None:
+            scanners.append(_default_scanner)
+            _default_scanner = None
     for scanner in scanners:
         with contextlib.suppress(BetterleaksError, OSError, ctypes.ArgumentError):
             scanner.close()

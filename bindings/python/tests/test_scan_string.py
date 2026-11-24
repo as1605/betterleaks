@@ -60,15 +60,20 @@ def test_scan_string_dict_access():
     with pytest.raises(KeyError):
         _ = f["to_dict"]
 
+    # Test dict constructor conversion and Mapping key consistency
     constructed_dict = dict(f)
     assert isinstance(constructed_dict, dict)
     assert constructed_dict["rule_id"] == "github-pat"
     assert constructed_dict["secret"] == GH_TOKEN
+    assert "file" in constructed_dict
+    assert set(constructed_dict.keys()) == set(f.keys())
 
+    # Test to_dict conversion
     d = f.to_dict()
     assert isinstance(d, dict)
     assert d["rule_id"] == "github-pat"
     assert d["secret"] == GH_TOKEN
+    assert d == constructed_dict
 
 
 def test_scan_string_multiline_positions():
@@ -105,3 +110,6 @@ def test_scan_string_multi_component_aws():
     f = next(f for f in findings if f.rule_id == "aws-access-token")
     assert f.secret == AWS_KEY
     assert len(f.component_sets) > 0
+    exported = dict(f)
+    assert exported["component_sets"] == f.component_sets
+    assert f.to_dict()["component_sets"] == f.component_sets
